@@ -1,0 +1,13 @@
+*.suo
+*.sdf
+*.ncb
+*.log
+*.pdb
+*.obj
+*.vs
+*.APS
+*.rte
+
+/bin
+/obj
+
