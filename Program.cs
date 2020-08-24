@@ -69,7 +69,7 @@ namespace SpritePacker
 
                     if (img.Image.Width < maxSize && img.Image.Height < maxSize)
                     {
-                        if (img.Image.BitDepth() == 8)
+                        if (img.Image.ColorType == ColorType.Palette)
                             images.Add(img);
                         else
                             Console.WriteLine($"Skip: {img.Path} Reason: Not 8 bpp");
@@ -84,8 +84,8 @@ namespace SpritePacker
                     Console.WriteLine($"Error: {file} Reason: {e.Message}");
 				}
 
-                if (images.Count > 10)
-                    break;
+                //if (images.Count > 10)
+                //    break;
             }
 
             images.Sort((ImageEx a, ImageEx b) => 
@@ -120,6 +120,19 @@ namespace SpritePacker
             return newMask;
         }
 
+        public static int[] ResizeFreePixels(int [] freePixels, int newWidth, int newHeight)
+		{
+            int[] newFreePixels = new int[newHeight];
+            for (int i = 0; i < freePixels.GetUpperBound(0); i++)
+                newFreePixels[i] = freePixels[i];
+
+            for (int i = freePixels.GetUpperBound(0); i < newFreePixels.GetUpperBound(0); i++)
+                newFreePixels[i] = newWidth;
+
+            return newFreePixels;
+		}
+
+
         // Simple algorithm from here: https://gamedev.stackexchange.com/questions/2829/texture-packing-algorithm
         public static (int width, int height) Resolve(ref List<ImageEx> images)
 		{
@@ -142,9 +155,12 @@ namespace SpritePacker
             while (atlasWidth < desiredWidth)
                 atlasWidth *= 2;
 
-            int atlasHeight = atlasWidth;
+            int atlasHeight = totalArea / atlasWidth;
 
             bool[,] mask = new bool[atlasWidth, atlasHeight];
+            int[] freePixels = new int[atlasHeight];
+            for (int i = 0; i < atlasHeight; i++)
+                freePixels[i] = atlasWidth;
 
             for (int i = 0; i < images.Count; i++)
 			{
@@ -161,25 +177,35 @@ namespace SpritePacker
 				{
                     if (y + img.Image.Height >= atlasHeight)
                     {
-                        atlasHeight += images[i].Image.Height;
+                        int increment = images[i].Image.Height / 4;
+
+                        atlasHeight += increment > 0 ? increment : 1;
                         mask = ResizeMask(mask, atlasWidth, atlasHeight);
+                        freePixels = ResizeFreePixels(freePixels, atlasWidth, atlasHeight);
                     }
 
-                    for (int x = 0; x < atlasWidth - ix; x++)
+                    if (freePixels[y] >= ix)
+                    {
+                        for (int x = 0; x < atlasWidth - ix; x++)
+                        {
+                            canFit = true;
+                            for (int mx = x; mx < x + ix && mx < atlasWidth && canFit; mx++)
+                                for (int my = y; my < y + iy && my < atlasHeight && canFit; my++)
+                                    if (mask[mx, my])
+                                        canFit = false;
+
+                            if (canFit)
+                            {
+                                atlasX = x;
+                                atlasY = y;
+                                break;
+                            }
+                        }
+                    } 
+                    else
 					{
-                        canFit = true;
-                        for (int mx = x; mx < x + ix && mx < atlasWidth && canFit; mx++)
-                            for (int my = y; my < y + iy && my < atlasHeight && canFit; my++)
-                                if (mask[mx, my])
-                                    canFit = false;
-
-                        if (canFit)
-						{
-                            atlasX = x;
-                            atlasY = y;
-                            break;
-						}
-                    }
+                        canFit = false;
+					}
 
                     if (canFit)
                         break;
@@ -191,9 +217,12 @@ namespace SpritePacker
                     img.AtlasX = atlasX;
                     img.AtlasY = atlasY;
 
-                    for (int mx = atlasX; mx < atlasX + ix; mx++)
-                        for (int my = atlasY; my < atlasY + iy; my++)
+                    for (int my = atlasY; my < atlasY + iy; my++)
+                    {
+                        freePixels[my] -= ix;
+                        for (int mx = atlasX; mx < atlasX + ix; mx++)
                             mask[mx, my] = true;
+                    }
                 }
                 else
 				{
@@ -208,9 +237,12 @@ namespace SpritePacker
 		{
             var outputBitmap = new MagickImage();
             outputBitmap.PreserveColorType();
-            outputBitmap.Read("z:\\Git\\SpritePacker\\palette.bmp");
+            outputBitmap.Read("palette.bmp");
             outputBitmap.Format = MagickFormat.Png8;
-            outputBitmap.Resize(size.width, size.height);
+            
+            var newImageSize = new MagickGeometry(size.width, size.height);
+            newImageSize.IgnoreAspectRatio = true;
+            outputBitmap.Resize(newImageSize);
 
             outputBitmap.ColormapSize = 256;
             for (int i = 0; i < 256; i++)
@@ -219,7 +251,7 @@ namespace SpritePacker
             foreach (var image in images)
                 outputBitmap.Composite(image.Image, new PointD(image.AtlasX, image.AtlasY));
 
-            outputBitmap.Settings.SetDefine(MagickFormat.Png8, "preserve-colormap", "true");
+            //outputBitmap.Settings.SetDefine(MagickFormat.Png8, "preserve-colormap", "true");
 
             outputBitmap.Write(directory + "/SpriteAtlas.png");
 		}
@@ -239,7 +271,7 @@ namespace SpritePacker
                 return;
 			}
 
-            var colorMap = GetColorMap("z:\\Git\\SpritePacker\\palette.bmp");
+            var colorMap = GetColorMap("palette.bmp");
 
             Console.WriteLine("Loading...");
             var images = LoadBitmaps(files, MAX_SIZE);
